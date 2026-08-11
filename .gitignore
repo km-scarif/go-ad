@@ -1,0 +1,4 @@
+# real credentials for the live tests
+.env.test
+
+tmp/
