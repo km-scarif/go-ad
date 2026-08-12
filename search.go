@@ -29,8 +29,22 @@ var classFilters = map[string]string{
 	ClassComputer:  "(objectCategory=computer)",
 	ClassOU:        "(objectClass=organizationalUnit)",
 	ClassGroup:     "(objectClass=group)",
-	ClassContainer: "(objectClass=container)",
+	ClassContainer: containerFilter,
 }
+
+// containerFilter selects the things that hold child objects but are not OUs.
+// There is no single class they share: AD's default layout puts CN=Builtin on
+// builtinDomain, CN=LostAndFound on lostAndFound, CN=NTDS Quotas on
+// msDS-QuotaContainer and CN=Infrastructure on infrastructureUpdate, so they
+// get enumerated. Matching only objectClass=container drops those four, which
+// is why they were missing from the tree and hidden as "system" objects in a
+// listing.
+//
+// domainDNS is deliberately absent: it is the base DN's own class, and a
+// subtree search matching it returns the base as a child of itself.
+const containerFilter = "(|(objectClass=container)(objectClass=builtinDomain)" +
+	"(objectClass=lostAndFound)(objectClass=msDS-QuotaContainer)" +
+	"(objectClass=infrastructureUpdate))"
 
 // Bitwise AND matching rule OID. Active Directory needs this to test a single
 // bit of userAccountControl — there is no other way to ask "is this account

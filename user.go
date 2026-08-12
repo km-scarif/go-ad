@@ -2,6 +2,7 @@ package ad
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"regexp"
@@ -27,6 +28,15 @@ type User struct {
 	Phone       string `json:"phone,omitempty"`      // telephoneNumber
 	UPN         string `json:"upn,omitempty"`        // userPrincipalName
 	Enabled     bool   `json:"enabled"`              // userAccountControl & 2 == 0
+
+	// GUID is objectGUID, base64-encoded from the raw 16 bytes. That encoding
+	// rather than the braced hex form on purpose: it is what Entra ID stores as
+	// immutableId/sourceAnchor, so this is the value to compare against when
+	// checking whether an on-prem account matches its synced cloud object.
+	//
+	// Read-only. objectGUID is assigned by the directory at creation and cannot
+	// be changed.
+	GUID string `json:"guid,omitempty"`
 }
 
 // CreateUserRequest is the input to CreateUser.
@@ -75,7 +85,7 @@ type UpdateUserRequest struct {
 var userAttrs = []string{
 	"sAMAccountName", "distinguishedName", "displayName", "givenName", "sn",
 	"mail", "title", "department", "physicalDeliveryOfficeName",
-	"telephoneNumber", "userAccountControl", "userPrincipalName",
+	"telephoneNumber", "userAccountControl", "userPrincipalName", "objectGUID",
 }
 
 // personFilter excludes computer accounts, which are a subclass of
@@ -473,5 +483,6 @@ func entryToUser(e *ldap.Entry) User {
 		Phone:       e.GetAttributeValue("telephoneNumber"),
 		UPN:         e.GetAttributeValue("userPrincipalName"),
 		Enabled:     uac&uacAccountDisabled == 0,
+		GUID:        base64.StdEncoding.EncodeToString(e.GetRawAttributeValue("objectGUID")),
 	}
 }

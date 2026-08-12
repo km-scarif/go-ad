@@ -60,7 +60,7 @@ func TestLiveReadOnly(t *testing.T) {
 	c := liveClient(t)
 	ctx := t.Context()
 
-	root, err := c.Tree(ctx)
+	root, err := c.Tree(ctx, true)
 	if err != nil {
 		t.Fatalf("Tree: %v", err)
 	}

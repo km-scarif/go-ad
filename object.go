@@ -135,7 +135,9 @@ func classOf(e *ldap.Entry) string {
 		return ClassGroup
 	case classes["user"], classes["person"]:
 		return ClassUser
-	case classes["container"], classes["builtindomain"], classes["domaindns"]:
+	case classes["container"], classes["builtindomain"], classes["domaindns"],
+		classes["lostandfound"], classes["msds-quotacontainer"],
+		classes["infrastructureupdate"]:
 		return ClassContainer
 	default:
 		return ""

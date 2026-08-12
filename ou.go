@@ -21,11 +21,13 @@ type OU struct {
 type TreeNode struct {
 	DN       string      `json:"dn"`
 	Name     string      `json:"name"`
+	RDN      string      `json:"rdn"`             // "OU=Servers", "CN=Users" — the DN's first component
+	Class    string      `json:"class,omitempty"` // ClassOU or ClassContainer
 	Children []*TreeNode `json:"children,omitempty"`
 }
 
 // ouAttrs is the attribute whitelist for OU reads.
-var ouAttrs = []string{"distinguishedName", "ou", "name", "description"}
+var ouAttrs = []string{"distinguishedName", "ou", "name", "description", "objectClass"}
 
 // Tree returns the entire OU hierarchy under BaseDN in a single search.
 //
@@ -35,17 +37,23 @@ var ouAttrs = []string{"distinguishedName", "ou", "name", "description"}
 // tree view can render the whole thing at once and expand without further
 // requests.
 //
-// Only organizational units are included. Containers such as CN=Users are not
-// OUs and do not appear, though Children will still list them.
-func (c *Client) Tree(ctx context.Context) (*TreeNode, error) {
+// withContainers adds the non-OU containers — CN=Users, CN=Builtin, CN=System,
+// CN=LostAndFound and the rest. They hold objects exactly as an OU does and
+// Children lists them, but they are AD's own furniture rather than the shape
+// somebody laid out, so the plain OU hierarchy is the useful default.
+func (c *Client) Tree(ctx context.Context, withContainers bool) (*TreeNode, error) {
 	conn, err := c.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
 
+	classes := []string{ClassOU}
+	if withContainers {
+		classes = append(classes, ClassContainer)
+	}
 	res, err := c.search(conn, c.cfg.BaseDN, ldap.ScopeWholeSubtree,
-		classFilters[ClassOU], ouAttrs, 0)
+		buildFilter(Query{Classes: classes}), ouAttrs, 0)
 	if err != nil {
 		return nil, fmt.Errorf("Tree: %w", err)
 	}
@@ -57,14 +65,32 @@ func (c *Client) Tree(ctx context.Context) (*TreeNode, error) {
 // from Tree so the assembly can be tested without a directory, which is where
 // the fiddly part lives.
 func buildTree(baseDN string, entries []*ldap.Entry) *TreeNode {
-	root := &TreeNode{DN: baseDN, Name: baseDN}
-	nodes := map[string]*TreeNode{canonicalDN(baseDN): root}
+	baseKey := canonicalDN(baseDN)
+	root := &TreeNode{DN: baseDN, Name: baseDN, RDN: baseDN, Class: ClassContainer}
+	nodes := map[string]*TreeNode{baseKey: root}
+
+	// The base DN can come back as a match in its own subtree search — domainDNS
+	// is a container class. Left in, it overwrites the root node and then gets
+	// attached to itself, which is not a wrong-looking tree but an endlessly
+	// deep one: sortTree recurses until the stack goes.
+	kept := make([]*ldap.Entry, 0, len(entries))
+	for _, e := range entries {
+		if canonicalDN(e.DN) != baseKey {
+			kept = append(kept, e)
+		}
+	}
+	entries = kept
 
 	// First pass: every OU becomes a node. The hierarchy cannot be built in the
 	// same pass, because the directory returns entries in no particular order —
 	// a child routinely arrives before its parent.
 	for _, e := range entries {
-		nodes[canonicalDN(e.DN)] = &TreeNode{DN: e.DN, Name: ouNameOf(e)}
+		nodes[canonicalDN(e.DN)] = &TreeNode{
+			DN:    e.DN,
+			Name:  ouNameOf(e),
+			RDN:   displayRDN(e.DN),
+			Class: classOf(e),
+		}
 	}
 
 	// Second pass: attach each node to its parent. A node whose parent is not an
@@ -294,6 +320,21 @@ func validOUName(name string) (string, error) {
 
 // ouNameOf prefers the ou attribute and falls back to name, which is what the
 // directory populates for entries created outside the usual tooling.
+// displayRDN is the DN's first component as a directory tool shows it —
+// "OU=Servers", "CN=Users". go-ldap lowercases the attribute type when it
+// reprints a parsed RDN, so it is uppercased back; everything else in AD's
+// world writes CN=/OU=/DC=.
+func displayRDN(dn string) string {
+	rdn, _, err := splitDN(dn)
+	if err != nil {
+		return dn
+	}
+	if i := strings.Index(rdn, "="); i > 0 {
+		return strings.ToUpper(rdn[:i]) + rdn[i:]
+	}
+	return rdn
+}
+
 func ouNameOf(e *ldap.Entry) string {
 	if v := e.GetAttributeValue("ou"); v != "" {
 		return v

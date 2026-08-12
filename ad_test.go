@@ -282,6 +282,29 @@ func TestBuildTreeOrphanAttachesToRoot(t *testing.T) {
 	}
 }
 
+// The base DN matches container filters through its own domainDNS class. Left
+// in the entry list it would become a child of itself, which renders as an
+// endlessly deep tree rather than an obvious error.
+func TestBuildTreeSkipsBaseDN(t *testing.T) {
+	const base = "DC=example,DC=com"
+
+	entries := []*ldap.Entry{
+		entry("dc=example, dc=com", map[string][]string{"name": {"example"}}), // same DN, different spelling
+		entry("CN=Users,"+base, map[string][]string{"name": {"Users"}, "objectClass": {"top", "container"}}),
+	}
+
+	root := buildTree(base, entries)
+	if len(root.Children) != 1 {
+		t.Fatalf("root has %d children, want 1 (Users)", len(root.Children))
+	}
+	if root.Children[0] == root {
+		t.Fatal("root was attached to itself")
+	}
+	if got := root.Children[0]; got.RDN != "CN=Users" || got.Class != ClassContainer {
+		t.Errorf("child = {RDN: %q, Class: %q}, want {CN=Users, container}", got.RDN, got.Class)
+	}
+}
+
 func TestClassOf(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -306,7 +329,9 @@ func TestClassOf(t *testing.T) {
 		{name: "container", classes: []string{"top", "container"}, want: ClassContainer},
 		{name: "builtinDomain is a container", classes: []string{"top", "builtinDomain"}, want: ClassContainer},
 		{name: "case insensitive", classes: []string{"TOP", "ORGANIZATIONALUNIT"}, want: ClassOU},
-		{name: "unrecognised", classes: []string{"top", "msDS-QuotaContainer"}, want: ""},
+		{name: "msDS-QuotaContainer is a container", classes: []string{"top", "msDS-QuotaContainer"}, want: ClassContainer},
+		{name: "lostAndFound is a container", classes: []string{"top", "lostAndFound"}, want: ClassContainer},
+		{name: "unrecognised", classes: []string{"top", "msSFU30DomainInfo"}, want: ""},
 	}
 
 	for _, tc := range tests {
